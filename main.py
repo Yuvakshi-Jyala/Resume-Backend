@@ -167,7 +167,7 @@ def parse_all_candidates(text: str):
 # ^^^ END ADDITION ^^^
 @app.get("/health")
 async def health():
-    return {status: "ok"}
+    return {"status": "ok"}
 
 @app.get("/api/kpi")
 async def kpi(refresh: bool = False):
