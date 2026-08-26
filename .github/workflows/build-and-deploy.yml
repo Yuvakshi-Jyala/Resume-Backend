@@ -1,0 +1,52 @@
+name: Build and Deploy to Azure Container App
+on:
+  push:
+    branches:
+      - main
+env:
+  IMAGE_NAME: resume-workflow-backend
+
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      # 2. Log in to Azure using service principal
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      # 3. Log in to Azure Container Registry
+      - name: Azure Container Registry Login (Admin)
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      # 4. Build and push image to ACR
+      - name: Build and Push Docker image
+        run: |
+          IMAGE_TAG=${{ secrets.ACR_NAME }}.azurecr.io/$IMAGE_NAME:${{ github.sha }}
+          docker build -t $IMAGE_TAG .
+          docker push $IMAGE_TAG
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+      
+      # 5. Deploy image to Azure Container App and update env vars
+      - name: Deploy to Azure Web App
+        run: |
+          az containerapp update \
+            --name ${{ secrets.CONTAINER_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --image ${{ env.IMAGE_TAG }} \
+            --min-replicas 1 \
+            --set-env-vars \
+              DATABASE_NAME=${{ secrets.DATABASE_NAME }} \
+              MONGODB_HOST=${{ secrets.MONGODB_HOST }} \
+              MONGODB_USERNAME=${{ secrets.MONGODB_USERNAME }} \
+              MONGODB_PASSWORD=${{ secrets.MONGODB_PASSWORD }} \
