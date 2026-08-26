@@ -165,6 +165,10 @@ def parse_all_candidates(text: str):
     return by_role
 
 # ^^^ END ADDITION ^^^
+@app.get("/health")
+async def health():
+    return {status: "ok"}
+
 @app.get("/api/kpi")
 async def kpi(refresh: bool = False):
     # Normal loads read the cached summary. refresh=1 (the Refresh button) forces
