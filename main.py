@@ -132,7 +132,7 @@ def parse_interviews(text: str):
         for d, t, n, r in pattern.findall(text)
     ]
 
-# vvv ADD THE TWO NEW THINGS HERE vvv
+
 
 _CANDIDATE_LINE_RE = re.compile(
     r"^-\s*(?P<role>[^|]+)\|\s*(?P<name>[^|]+)\|\s*(?P<status>[^|]+?)"
@@ -284,6 +284,107 @@ async def ingest():
     if cards:
         await recalc_stats()
     return {"ok": True, "ingested": len(cards), "files": result.get("ingested_files", 0)}
+
+from bson import ObjectId
+
+@app.get("/api/applicants")
+async def get_applicants():
+    result = []
+
+    async for applicant in applicants.find():
+        analysis = applicant.get("analysis", {})
+        score = analysis.get("fit_score")
+
+        if score is None:
+            score = applicant.get("score")
+
+        score = float(score or 0)
+        years = analysis.get("experience_years")
+        years = analysis.get("experience_years")
+
+        if years is None:
+            exp = "—"                      # Unknown / old seeded data
+        elif years < 1:
+            exp = "Fresher"                # 0–1 year experience
+        elif years == int(years):
+            exp = f"{int(years)} yr" if years == 1 else f"{int(years)} yrs"
+        else:
+            exp = f"{years:.1f} yrs"
+
+
+        if score >= 90:
+            recommendation = "Fast-track"
+            skills = "Strong"
+        elif score >= 75:
+            recommendation = "Interview"
+            skills = "Strong"
+        elif score >= 60:
+            recommendation = "Review"
+            skills = "Moderate"
+        else:
+            recommendation = "Reject"
+            skills = "Weak"
+
+        result.append({
+            "id": str(applicant["_id"]),
+            "name": applicant.get("name"),
+            "role": applicant.get("role"),
+            "match": round(score, 1),
+            "experience": exp,
+            "skills": skills,
+            "recommendation": recommendation,
+            "status": applicant.get("status"),
+        })
+
+    result.sort(key=lambda x: x["match"], reverse=True)
+    return result
+
+
+from bson import ObjectId
+from fastapi import HTTPException
+
+@app.get("/api/applicants/{applicant_id}")
+async def get_applicant(applicant_id: str):
+    applicant = await applicants.find_one({"_id": ObjectId(applicant_id)})
+
+    if not applicant:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+
+    analysis = applicant.get("analysis", {})
+
+    years = analysis.get("experience_years")
+    if years is None:
+        experience = "Fresher"
+    elif years < 1:
+        experience = "Fresher"
+    elif years == int(years):
+        experience = f"{int(years)} yr" if years == 1 else f"{int(years)} yrs"
+    else:
+        experience = f"{years:.1f} yrs"
+
+    return {
+        "id": str(applicant["_id"]),
+
+        "name": analysis.get("name"),
+        "role": analysis.get("role"),
+        "email": analysis.get("email"),
+        "phone": analysis.get("phone"),
+
+        "fit_score": analysis.get("fit_score"),
+        "band": analysis.get("band"),
+
+        "experience": experience,
+        "experience_years": years,
+
+        "summary": analysis.get("summary"),
+        "verdict": analysis.get("verdict"),
+
+        "matched_skills": analysis.get("matched_skills", []),
+        "missing_skills": analysis.get("missing_skills", []),
+
+        "technical_questions": analysis.get("interview_questions", {}).get("technical", []),
+        "behavioral_questions": analysis.get("interview_questions", {}).get("behavioral", [])
+    }
 
 @app.post("/api/roles/{role}/mark-seen")
 async def mark_role_seen(role: str):
