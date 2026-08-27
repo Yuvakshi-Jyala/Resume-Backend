@@ -164,7 +164,7 @@ def parse_all_candidates(text: str):
         })
     return by_role
 
-# ^^^ END ADDITION ^^^
+# Render deployment test
 @app.get("/health")
 async def health():
     return {"status": "ok"}
