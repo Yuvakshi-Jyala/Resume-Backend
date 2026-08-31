@@ -4,7 +4,7 @@ import re
 from dotenv import load_dotenv
 
 load_dotenv()  # read backend/.env before anything reads os.getenv
-from stats import get_stats
+from stats import get_stats, recalc_stats
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
@@ -309,7 +309,7 @@ async def kpi(refresh: bool = False):
     else:
         stats = await get_stats()
         if not stats:
-            stats = await recalc_stats()
+            stats = await get_stats()
     return {
         "roles": stats.get("roles", []),
         "interviews": stats.get("interviews", []),
