@@ -1,11 +1,10 @@
 import json
 import os
 import re
-
 from dotenv import load_dotenv
 
 load_dotenv()  # read backend/.env before anything reads os.getenv
-
+from stats import get_stats
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
@@ -20,20 +19,29 @@ from datetime import datetime, timedelta, timezone
 from db import applicants, processed_emails, users
 import cogitx
 
-# Comma-separated list of allowed frontend origins. Locally we default to the
-# vite dev server; in production set FRONTEND_ORIGINS to the deployed URL(s),
-# e.g. "https://your-app.vercel.app".
-_default_origins = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://cogitx-compass-frontend-dsavamhtead3fqg8.canadacentral-01.azurewebsites.net/,https://cogitx-compass-frontend-dsavamhtead3fqg8.canadacentral-01.azurewebsites.net"
+
+# build the origin list
+_default_origins = (
+    "http://localhost:5173,"
+    "http://127.0.0.1:5173,"
+    "http://localhost:3000,"
+    "https://cogitx-compass-frontend-dsavamhtead3fqg8.canadacentral-01.azurewebsites.net"
+)
+
 ALLOWED_ORIGINS = [
     o.strip()
     for o in os.getenv("FRONTEND_ORIGINS", _default_origins).split(",")
     if o.strip()
 ]
 
+# CREATE THE APP FIRST
 app = FastAPI(title="Resume Screening UI backend")
+
+# THEN add middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -291,7 +299,7 @@ async def login(credentials: LoginRequest):
             "email": user["email"],
         },
     }
-    
+
 @app.get("/api/kpi")
 async def kpi(refresh: bool = False):
     # Normal loads read the cached summary. refresh=1 (the Refresh button) forces
