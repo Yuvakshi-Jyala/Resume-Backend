@@ -6,12 +6,18 @@ from dotenv import load_dotenv
 
 load_dotenv()  # read backend/.env before anything reads os.getenv
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
-from db import applicants, processed_emails
-from stats import recalc_stats, get_stats
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+from pydantic import BaseModel, EmailStr
+
+from passlib.context import CryptContext
+from jose import jwt
+from datetime import datetime, timedelta, timezone
+
+from db import applicants, processed_emails, users
 import cogitx
 
 # Comma-separated list of allowed frontend origins. Locally we default to the
@@ -32,6 +38,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# =========================
+# AUTH CONFIGURATION
+# =========================
+
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+)
+
+security = HTTPBearer()
 # The KPI agent emits a markdown table + a ```chart block. The table is the
 # richer source (all 5 columns), so parse it first and fall back to the chart.
 
@@ -43,7 +63,24 @@ _COL_MAP = {
     "calls scheduled": "calls_scheduled",
     "calls completed": "calls_completed",
 }
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
 
+
+def verify_password(password: str, password_hash: str) -> bool:
+    return pwd_context.verify(password, password_hash)
+
+
+def create_access_token(data: dict) -> str:
+    payload = data.copy()
+
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+
+    payload.update({"exp": expire})
+
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 def _norm(h: str) -> str:
     return h.strip().lower()
@@ -169,6 +206,92 @@ def parse_all_candidates(text: str):
 async def health():
     return {"status": "ok"}
 
+# ----------------------------
+# Authentication request models
+# ----------------------------
+
+class SignupRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+# ----------------------------
+# Authentication APIs
+# ----------------------------
+
+@app.post("/api/auth/signup")
+async def signup(user: SignupRequest):
+    # Check if email already exists
+    existing_user = await users.find_one({"email": user.email})
+
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered."
+        )
+
+    # Create new user document
+    new_user = {
+        "name": user.name,
+        "email": user.email,
+        "password_hash": hash_password(user.password),
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    result = await users.insert_one(new_user)
+
+    # Create JWT token
+    access_token = create_access_token({
+        "user_id": str(result.inserted_id),
+        "email": user.email,
+    })
+
+    return {
+        "message": "Signup successful.",
+        "access_token": access_token,
+        "user": {
+            "id": str(result.inserted_id),
+            "name": user.name,
+            "email": user.email,
+        },
+    }
+
+@app.post("/api/auth/login")
+async def login(credentials: LoginRequest):
+    # Find user by email
+    user = await users.find_one({"email": credentials.email})
+
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password."
+        )
+
+    # Verify password
+    if not verify_password(credentials.password, user["password_hash"]):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password."
+        )
+
+    # Generate new JWT
+    access_token = create_access_token({
+        "user_id": str(user["_id"]),
+        "email": user["email"],
+    })
+
+    return {
+        "message": "Login successful.",
+        "access_token": access_token,
+        "user": {
+            "id": str(user["_id"]),
+            "name": user["name"],
+            "email": user["email"],
+        },
+    }
+    
 @app.get("/api/kpi")
 async def kpi(refresh: bool = False):
     # Normal loads read the cached summary. refresh=1 (the Refresh button) forces
