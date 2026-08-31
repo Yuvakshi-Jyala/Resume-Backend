@@ -162,7 +162,7 @@ def send_decision_email(name: str, email: str, role: str, decision: str) -> bool
     return True
 
 
-def run_screening(files: list[tuple[str, bytes]]) -> dict:
+def run_screening(files: list[tuple[str, bytes, str]]) -> dict:
     """
     Resumes present -> conditional IF branch -> full screening pipeline.
 
@@ -174,13 +174,14 @@ def run_screening(files: list[tuple[str, bytes]]) -> dict:
     files: list of (filename, raw_bytes), base64-encoded for the JSON API.
     """
     encoded = [
-        {
-            "filename": name,
-            "mimeType": "application/pdf",
-            "base64": base64.b64encode(blob).decode("ascii"),
-        }
-        for name, blob in files
+    {
+        "filename": name,
+        "mimeType": mime_type,
+        "base64": base64.b64encode(blob).decode("ascii"),
+    }
+    for name, blob, mime_type in files
     ]
+
     data = _trigger({
         "text": "Screen the attached resumes and produce the candidate report.",
         "files": encoded,

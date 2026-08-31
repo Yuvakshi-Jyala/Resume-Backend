@@ -17,7 +17,7 @@ import cogitx
 # Comma-separated list of allowed frontend origins. Locally we default to the
 # vite dev server; in production set FRONTEND_ORIGINS to the deployed URL(s),
 # e.g. "https://your-app.vercel.app".
-_default_origins = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://cogitx-compass-frontend-dsavamhtead3fqg8.canadacentral-01.azurewebsites.net/"
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://cogitx-compass-frontend-dsavamhtead3fqg8.canadacentral-01.azurewebsites.net/,https://cogitx-compass-frontend-dsavamhtead3fqg8.canadacentral-01.azurewebsites.net"
 ALLOWED_ORIGINS = [
     o.strip()
     for o in os.getenv("FRONTEND_ORIGINS", _default_origins).split(",")
@@ -243,7 +243,11 @@ async def _persist_card(card: dict):
 
 @app.post("/api/screen")
 async def screen(files: list[UploadFile] = File(...)):
-    blobs = [(f.filename, await f.read()) for f in files[:5]]
+    blobs = [
+        (f.filename, await f.read(), f.content_type)
+        for f in files[:5]
+    ]
+
     result = cogitx.run_screening(blobs)
 
     for card in result.get("cards", []):
@@ -251,6 +255,7 @@ async def screen(files: list[UploadFile] = File(...)):
 
     await recalc_stats()
     return result
+
 
 
 @app.post("/api/ingest")
