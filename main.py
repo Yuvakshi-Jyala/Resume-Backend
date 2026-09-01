@@ -448,17 +448,27 @@ async def get_applicants():
             exp = f"{years:.1f} yrs"
 
 
-        if score >= 90:
-            recommendation = "Fast-track"
-            skills = "Strong"
-        elif score >= 75:
-            recommendation = "Interview"
+        
+        recommendation = analysis.get("band")
+        if not recommendation:
+            # Rubric decision bands (score out of ~105).
+            if score >= 85:
+                recommendation = "Fast Track"
+            elif score >= 75:
+                recommendation = "Strong Shortlist"
+            elif score >= 65:
+                recommendation = "Shortlist"
+            elif score >= 55:
+                recommendation = "Hold"
+            else:
+                recommendation = "Reject"
+
+        
+        if score >= 75:
             skills = "Strong"
         elif score >= 60:
-            recommendation = "Review"
             skills = "Moderate"
         else:
-            recommendation = "Reject"
             skills = "Weak"
 
         result.append({
