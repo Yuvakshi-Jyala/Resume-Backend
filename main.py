@@ -557,69 +557,59 @@ async def mark_role_seen(role: str):
 
 
 class Decision(BaseModel):
-    name: str
-    role: str
+    id: str
     decision: str  # "Shortlisted" (accept) or "Rejected"
 
 
 @app.post("/api/decision")
 async def decision(body: Decision):
-    """Record a recruiter's accept/reject decision and send the matching email.
+    """Record a recruiter's accept/reject decision (by applicant id) and send the
+    matching shortlist/rejection email via the CogitX email workflow.
 
-    The email goes out via the CogitX email workflow (cogitx.send_decision_email).
-    That is a safe no-op until COGITX_EMAIL_EXPORT_ID is set in the environment —
-    while unset, the decision is still recorded, email_sent stays False, and
-    nothing is sent. The send is also wrapped in try/except so a failure never
-    breaks the endpoint; the decision is saved regardless.
+    The frontend only sends {id, decision}; name / email / role are looked up from
+    the stored applicant. The email send is wrapped in try/except so a failure
+    never breaks the endpoint — the decision is saved regardless, and email_sent
+    reflects the real result.
     """
-    print(f"[decision] received: {body.name} | {body.role} | {body.decision}")
-    print(f"[decision] email export configured: {bool(cogitx.EMAIL_EXPORT_ID)}")
+    try:
+        oid = ObjectId(body.id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid applicant id")
+
+    doc = await applicants.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+
+    analysis = doc.get("analysis") or {}
+    name = analysis.get("name") or doc.get("name") or ""
+    role = analysis.get("role") or doc.get("role") or ""
+    email = analysis.get("email")
 
     new_status = "Shortlisted" if body.decision == "Shortlisted" else "Rejected"
     await applicants.update_one(
-        {"name": body.name, "role": body.role},
-        {
-            "$set": {
-                "status": new_status,
-                "decision": body.decision,
-                "email_sent": False,
-            }
-        },
-        upsert=True,
+        {"_id": oid},
+        {"$set": {"status": new_status, "decision": body.decision, "email_sent": False}},
     )
 
-    # Send the shortlist/rejection email. The candidate's email address comes from
-    # the stored analyzer card; seeded candidates without analysis have no email,
-    # so we simply skip sending for them.
     email_sent = False
-    doc = await applicants.find_one({"name": body.name, "role": body.role})
-    email = (doc.get("analysis") or {}).get("email") if doc else None
-    if not doc:
-        print(f"[decision] no applicant doc found for {body.name} / {body.role}")
-    elif not email:
-        print(f"[decision] no email on {body.name} (seeded/unscored?) — skipping send")
-    if email:
-        print(f"[decision] sending {body.decision} email to {email} …")
+    if not email:
+        print(f"[decision] no email on {name} — skipping send")
+    else:
+        print(f"[decision] sending {body.decision} email to {email} ...")
         try:
-            email_sent = cogitx.send_decision_email(
-                body.name, email, body.role, body.decision
-            )
-            print(f"[decision] send_decision_email returned: {email_sent}")
+            email_sent = cogitx.send_decision_email(name, email, role, body.decision)
         except Exception as e:  # never let an email failure break the decision
-            print(f"[decision] email send FAILED for {body.name}: {e!r}")
+            print(f"[decision] email send FAILED for {name}: {e!r}")
             email_sent = False
         if email_sent:
-            await applicants.update_one(
-                {"name": body.name, "role": body.role},
-                {"$set": {"email_sent": True}},
-            )
-            print(f"[decision] email_sent=True saved for {body.name}")
+            await applicants.update_one({"_id": oid}, {"$set": {"email_sent": True}})
 
     await recalc_stats()
     return {
         "ok": True,
-        "name": body.name,
-        "role": body.role,
+        "id": body.id,
+        "name": name,
+        "role": role,
         "status": new_status,
         "email_sent": email_sent,
     }
