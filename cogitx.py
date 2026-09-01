@@ -325,8 +325,10 @@ def _card_from_json(c: dict) -> dict:
     """Map a candidate object from agent_2's JSON output to a frontend card."""
     q = c.get("interview_questions") or {}
     return {
-        "name": c.get("name", ""),
-        "role": c.get("role", ""),
+        # Accept both the original names (name/role) and the newer workflow
+        # schema (candidate_name/matched_role) so either output shape works.
+        "name": c.get("name") or c.get("candidate_name") or "",
+        "role": c.get("role") or c.get("matched_role") or "",
         "email": c.get("email"),
         "phone": c.get("phone"),
         "fit_score": c.get("fit_score"),
@@ -341,6 +343,10 @@ def _card_from_json(c: dict) -> dict:
             "technical": q.get("technical") or [],
             "behavioral": q.get("behavioral") or [],
         },
+        # Extra fields from the newer workflow schema — passed through so the
+        # frontend can display them (backend doesn't otherwise use them).
+        "resume_strength_snapshot": c.get("resume_strength_snapshot") or {},
+        "recruiter_notes": c.get("recruiter_notes") or [],
     }
 
 
