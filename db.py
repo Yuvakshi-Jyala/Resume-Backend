@@ -18,8 +18,10 @@ STATS_DOC_ID = "current"
 
 # Role application caps. Kept here so stats.py can attach them per role.
 ROLE_CAPS = {
-    "Machine Learning Engineer": 40,
-    "Data Scientist": 30,
-    "Backend Software Engineer": 50,
-    "Product Manager": 25,
+    "AI/ML Engineer": 30,
+    "Solution Architect": 30,
+    "Product Manager": 30,
+    "Software Development Engineer": 30,
+    "Forward Deployed Engineer": 30,
+    "Internship": 30,
 }
