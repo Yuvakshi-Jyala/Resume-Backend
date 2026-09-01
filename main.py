@@ -519,7 +519,12 @@ async def get_applicant(applicant_id: str):
         "missing_skills": analysis.get("missing_skills", []),
 
         "technical_questions": analysis.get("interview_questions", {}).get("technical", []),
-        "behavioral_questions": analysis.get("interview_questions", {}).get("behavioral", [])
+        "behavioral_questions": analysis.get("interview_questions", {}).get("behavioral", []),
+
+        # New workflow extras, surfaced for the applicant detail view.
+        "scores_line": analysis.get("scores_line"),
+        "resume_strength_snapshot": analysis.get("resume_strength_snapshot", {}),
+        "recruiter_notes": analysis.get("recruiter_notes", []),
     }
 
 @app.post("/api/roles/{role}/mark-seen")
