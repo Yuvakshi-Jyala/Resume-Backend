@@ -19,6 +19,7 @@ so the React frontend needs zero changes:
 from datetime import datetime, timezone
 
 from db import applicants, dashboard_stats, ROLE_CAPS, STATS_DOC_ID
+from cogitx import normalize_band, normalize_role
 
 # Anyone at these stages has cleared the shortlist (Option B: cumulative).
 _PAST_APPLIED = {"Shortlisted", "Call Scheduled", "Call Completed"}
@@ -39,9 +40,9 @@ _BANDS = ["Fast Track", "Strong Shortlist", "Shortlist", "Hold", "Reject"]
 
 def _band_for(d: dict) -> str:
     """The candidate's band: use the workflow-assigned band if present, else
-    derive it from the score using the rubric thresholds (score out of ~105)."""
+    derive it from the score using the rubric thresholds (score out of ~100)."""
     analysis = d.get("analysis") or {}
-    band = analysis.get("band")
+    band = normalize_band(analysis.get("band"))
     if band:
         return band
     score = analysis.get("fit_score")
@@ -71,9 +72,10 @@ async def compute_stats() -> dict:
     roles: dict[str, dict] = {}
     candidates_by_role: dict[str, list] = {}
     interviews: list[dict] = []
+    fast_track: list[dict] = []
 
     for d in docs:
-        role = d.get("role", "")
+        role = normalize_role(d.get("role", ""))
         status = d.get("status", "")
 
         r = roles.setdefault(role, {
@@ -100,7 +102,21 @@ async def compute_stats() -> dict:
         if d.get("is_new"):
             r["new_count"] += 1    
 
+        if band == "Fast Track":
+            fast_track.append({
+                "id": str(d["_id"]),
+                "date": d.get("interview_date") or "",
+                "time": d.get("interview_time") or "",
+                "name": d.get("name", ""),
+                "role": role,
+                # extras (harmless; Interview interface ignores them)
+                "score": d.get("score"),
+                "band": band,
+                "status": status,
+            })
+
         candidates_by_role.setdefault(role, []).append({
+            "id": str(d["_id"]),
             "name": d.get("name", ""),
             "status": status,
             "interview_date": d.get("interview_date"),
@@ -123,10 +139,12 @@ async def compute_stats() -> dict:
 
     roles_list = sorted(roles.values(), key=lambda r: _role_sort_key(r["role"]))
     interviews.sort(key=lambda i: (i["date"], i["time"]))
+    fast_track.sort(key=lambda c: (c["score"] or 0), reverse=True)
 
     return {
         "roles": roles_list,
         "interviews": interviews,
+        "fast_track": fast_track,
         "candidates_by_role": candidates_by_role,
     }
 

@@ -313,6 +313,7 @@ async def kpi(refresh: bool = False):
     return {
         "roles": stats.get("roles", []),
         "interviews": stats.get("interviews", []),
+        "fast_track": stats.get("fast_track", []),
         "candidates_by_role": stats.get("candidates_by_role", {}),
     }
 
@@ -333,7 +334,8 @@ async def _persist_card(card: dict):
     applicant = {
         "name": name,
         "role": role,
-        "status": "Shortlisted" if (card.get("fit_score") or 0) >= 65 else "Applied",
+        # NOTE: status is NOT set here — it's seeded to "Applied" only on insert
+        # (below), so a re-screen never overwrites a recruiter's decision.
         "score": card.get("fit_score"),
         # Full analyzer card so the dashboard can show the same detail view
         # (summary, matched/gaps, scores, verdict, interview questions).
@@ -358,6 +360,9 @@ async def _persist_card(card: dict):
         {
             "$set": applicant,
             "$setOnInsert": {
+                # Every new applicant starts as "Applied"; only a recruiter
+                # decision (via /api/decision*) moves it to Shortlisted/Rejected.
+                "status": "Applied",
                 "interview_date": None,
                 "interview_time": None,
 
@@ -449,7 +454,7 @@ async def get_applicants():
 
 
         
-        recommendation = analysis.get("band")
+        recommendation = cogitx.normalize_band(analysis.get("band"))
         if not recommendation:
             # Rubric decision bands (score out of ~105).
             if score >= 85:
@@ -510,6 +515,7 @@ async def get_applicant(applicant_id: str):
 
     return {
         "id": str(applicant["_id"]),
+        "status": applicant.get("status"),
 
         "name": analysis.get("name"),
         "role": analysis.get("role"),
@@ -517,7 +523,7 @@ async def get_applicant(applicant_id: str):
         "phone": analysis.get("phone"),
 
         "fit_score": analysis.get("fit_score"),
-        "band": analysis.get("band"),
+        "band": cogitx.normalize_band(analysis.get("band")),
 
         "experience": experience,
         "experience_years": years,

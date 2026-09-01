@@ -321,6 +321,57 @@ def _try_parse_json_list(raw):
         return []
 
 
+
+_CANONICAL_BANDS = {
+    "fast track": "Fast Track",
+    "strong shortlist": "Strong Shortlist",
+    "shortlist": "Shortlist",
+    "hold": "Hold",
+    "reject": "Reject",
+}
+
+
+def normalize_band(band):
+    """Map any casing/hyphen/spacing variant to the 5 canonical rubric bands.
+    Unknown values are returned unchanged."""
+    if not band or not isinstance(band, str):
+        return band
+    key = " ".join(band.strip().lower().replace("-", " ").replace("_", " ").split())
+    return _CANONICAL_BANDS.get(key, band)
+
+
+
+
+_ROLE_ALIASES = {
+    "ai/ml engineer": "AI/ML Engineer",
+    "aiml engineer": "AI/ML Engineer",
+    "machine learning engineer": "AI/ML Engineer",
+    "ml engineer": "AI/ML Engineer",
+    "agent architect": "AI/ML Engineer",
+    "software development engineer": "Software Development Engineer",
+    "sde": "Software Development Engineer",
+    "software engineer": "Software Development Engineer",
+    "forward deployed engineer": "Forward Deployed Engineer",
+    "fde": "Forward Deployed Engineer",
+    "solution architect": "Solution Architect",
+    "product manager": "Product Manager",
+    "ai product manager": "Product Manager",
+    "internship": "Internship",
+    "intern": "Internship",
+}
+
+
+def normalize_role(role):
+    """Map role-name variants to the 6 canonical roles. Drops any trailing
+    parenthetical (e.g. "AI/ML Engineer (Agent Architect)" -> "AI/ML Engineer").
+    Unknown values are returned trimmed but unchanged."""
+    if not role or not isinstance(role, str):
+        return role
+    base = role.split("(")[0]  # drop "(Agent Architect)" etc.
+    key = " ".join(base.strip().lower().split())
+    return _ROLE_ALIASES.get(key, role.strip())
+
+
 def _card_from_json(c: dict) -> dict:
     """Map a candidate object from agent_2's JSON output to a frontend card."""
     q = c.get("interview_questions") or {}
@@ -328,11 +379,11 @@ def _card_from_json(c: dict) -> dict:
         # Accept both the original names (name/role) and the newer workflow
         # schema (candidate_name/matched_role) so either output shape works.
         "name": c.get("name") or c.get("candidate_name") or "",
-        "role": c.get("role") or c.get("matched_role") or "",
+        "role": normalize_role(c.get("role") or c.get("matched_role") or ""),
         "email": c.get("email"),
         "phone": c.get("phone"),
         "fit_score": c.get("fit_score"),
-        "band": c.get("band"),
+        "band": normalize_band(c.get("band")),
         "matched_skills": c.get("matched_skills") or [],
         "missing_skills": c.get("missing_skills") or [],
         "summary": c.get("summary") or "",
