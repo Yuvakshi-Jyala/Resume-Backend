@@ -13,6 +13,7 @@ Confirmed from the export docs + a real response:
   - Conditional routing keys off the input: files present -> screening branch,
     otherwise the KPI / hiring-status branch.
 """
+import asyncio
 import base64
 import logging
 import os
@@ -64,8 +65,8 @@ def _headers(client_id: str = "", client_secret: str = "") -> dict:
     }
 
 
-def _trigger(body: dict, export_id: str = "", client_id: str = "",
-             client_secret: str = "") -> dict:
+async def _trigger(body: dict, export_id: str = "", client_id: str = "",
+                    client_secret: str = "") -> dict:
     """POST the job, handle sync-inline vs async-poll, return the `data` object.
 
     export_id defaults to the main screening export; pass a different one (e.g.
@@ -76,10 +77,10 @@ def _trigger(body: dict, export_id: str = "", client_id: str = "",
         raise RuntimeError("COGITX export id not set.")
     headers = _headers(client_id, client_secret)
     trigger_url = f"{BASE_URL}/project/exports/rest-api/{eid}/jobs?waitSeconds=30"
-    with httpx.Client(timeout=httpx.Timeout(30.0, read=300.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0)) as client:
         logger.info("BASE_URL = %r", BASE_URL)
         logger.info("TRIGGER URL = %r", trigger_url)
-        r = client.post(trigger_url, json=body, headers=headers)
+        r = await client.post(trigger_url, json=body, headers=headers)
         r.raise_for_status()
         data = r.json().get("data", {})
 
@@ -91,13 +92,13 @@ def _trigger(body: dict, export_id: str = "", client_id: str = "",
         run_id = data.get("runId")
         status_url = data.get("statusUrl")
         if run_id:
-            return _poll(client, run_id, eid, headers, status_url)
+            return await _poll(client, run_id, eid, headers, status_url)
 
         raise RuntimeError(f"Unexpected trigger response (no isCompleted/runId): {list(data)}")
 
 
-def _poll(client: httpx.Client, run_id: str, export_id: str = "",
-          headers: dict = None, status_url: str = "") -> dict:
+async def _poll(client: httpx.AsyncClient, run_id: str, export_id: str = "",
+                 headers: dict = None, status_url: str = "") -> dict:
     eid = export_id or EXPORT_ID
     headers = headers or _headers()
     # The poll path isn't 100% consistent across responses (statusUrl sometimes
@@ -111,10 +112,10 @@ def _poll(client: httpx.Client, run_id: str, export_id: str = "",
 
     deadline = time.time() + POLL_TIMEOUT
     while time.time() < deadline:
-        time.sleep(POLL_INTERVAL)
+        await asyncio.sleep(POLL_INTERVAL)
         for url in candidates:
             try:
-                r = client.get(url, headers=headers)
+                r = await client.get(url, headers=headers)
                 r.raise_for_status()
             except Exception:
                 continue  # this URL form / transient hiccup — try the next
@@ -132,7 +133,7 @@ def _poll(client: httpx.Client, run_id: str, export_id: str = "",
     raise TimeoutError(f"Job {run_id} did not complete within {POLL_TIMEOUT}s")
 
 
-def send_decision_email(name: str, email: str, role: str, decision: str) -> bool:
+async def send_decision_email(name: str, email: str, role: str, decision: str) -> bool:
     """Trigger the CogitX email workflow to send the shortlist/rejection email.
 
     No-op (returns False) until COGITX_EMAIL_EXPORT_ID is configured, so this is
@@ -150,7 +151,7 @@ def send_decision_email(name: str, email: str, role: str, decision: str) -> bool
     # Also mirror them at the top level and as text for robustness across setups.
     body = {"payload": payload, "text": json.dumps(payload), **payload}
 
-    data = _trigger(
+    data = await _trigger(
         body,
         export_id=EMAIL_EXPORT_ID,
         client_id=EMAIL_CLIENT_ID,
@@ -162,7 +163,7 @@ def send_decision_email(name: str, email: str, role: str, decision: str) -> bool
     return True
 
 
-def run_screening(files: list[tuple[str, bytes, str]]) -> dict:
+async def run_screening(files: list[tuple[str, bytes, str]]) -> dict:
     """
     Resumes present -> conditional IF branch -> full screening pipeline.
 
@@ -182,7 +183,7 @@ def run_screening(files: list[tuple[str, bytes, str]]) -> dict:
     for name, blob, mime_type in files
     ]
 
-    data = _trigger({
+    data = await _trigger({
         "text": "Screen the attached resumes and produce the candidate report.",
         "files": encoded,
     })
@@ -420,7 +421,7 @@ def _emails_from_ingest(raw) -> list:
     return emails if isinstance(emails, list) else []
 
 
-def _download_pdf(url: str, attempts: int = 3) -> bytes | None:
+async def _download_pdf(url: str, attempts: int = 3) -> bytes | None:
     """Download a resume PDF from its (temporary, signed) attachment URL.
 
     Retries a few times because the signed links can be slow and the network
@@ -429,8 +430,8 @@ def _download_pdf(url: str, attempts: int = 3) -> bytes | None:
     """
     for i in range(attempts):
         try:
-            with httpx.Client(timeout=120.0, follow_redirects=True) as client:
-                r = client.get(url)
+            async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+                r = await client.get(url)
                 r.raise_for_status()
                 content = r.content
             if len(content) < 1000:  # too small to be a real PDF — treat as bad
@@ -440,7 +441,7 @@ def _download_pdf(url: str, attempts: int = 3) -> bytes | None:
         except Exception as e:
             logger.warning("attachment download attempt %d/%d failed: %s",
                            i + 1, attempts, e)
-            time.sleep(2)
+            await asyncio.sleep(2)
     logger.warning("giving up on attachment after %d attempts", attempts)
     return None
 
@@ -448,7 +449,7 @@ def _download_pdf(url: str, attempts: int = 3) -> bytes | None:
 MAX_INGEST_RESUMES = 5  # the scoring workflow accepts up to 5 files per run
 
 
-def run_ingest(skip_ids=None) -> dict:
+async def run_ingest(skip_ids=None) -> dict:
     """Read new (unread) application emails via the retrieval workflow, download
     each resume PDF, score them through the existing screening workflow, and
     return {report, cards, ingested_files, processed_ids}.
@@ -463,7 +464,7 @@ def run_ingest(skip_ids=None) -> dict:
         logger.info("COGITX_INGEST_EXPORT_ID not set — skipping email ingest")
         return {"report": "", "cards": [], "ingested_files": 0, "processed_ids": []}
 
-    data = _trigger(
+    data = await _trigger(
         {"text": "Read new application emails."},
         export_id=INGEST_EXPORT_ID,
         client_id=INGEST_CLIENT_ID,
@@ -499,7 +500,7 @@ def run_ingest(skip_ids=None) -> dict:
             url = att.get("url")
 
             if is_pdf and url:
-                pdf = _download_pdf(url)
+                pdf = await _download_pdf(url)
                 if pdf:
                     blobs.append((name, pdf))
                     metadata.append({
@@ -524,11 +525,11 @@ def run_ingest(skip_ids=None) -> dict:
     batch = blobs[:MAX_INGEST_RESUMES]
     batch_meta = metadata[:MAX_INGEST_RESUMES]
 
-    result = run_screening(batch)
+    result = await run_screening(batch)
 
     if not result.get("cards"):
         logger.warning("scoring returned no candidates — retrying once")
-        result = run_screening(batch)
+        result = await run_screening(batch)
 
     # Attach Outlook metadata to each screened card.
     for card, meta in zip(result.get("cards", []), batch_meta):
@@ -546,9 +547,9 @@ def run_ingest(skip_ids=None) -> dict:
     return result
 
 
-def run_kpi() -> str:
+async def run_kpi() -> str:
     """No files -> conditional ELSE branch -> hiring status summary text."""
-    data = _trigger({"text": KPI_TRIGGER_MESSAGE})
+    data = await _trigger({"text": KPI_TRIGGER_MESSAGE})
     raw = _extract_content(data)
     return raw if isinstance(raw, str) else str(raw)
 
