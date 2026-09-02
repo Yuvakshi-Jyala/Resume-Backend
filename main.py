@@ -300,6 +300,25 @@ async def login(credentials: LoginRequest):
         },
     }
 
+# Short role labels used only in the /api/kpi response. Stored data keeps the
+# full role name; this is display-only so the dashboard columns stay narrow.
+ROLE_DISPLAY_NAMES = {
+    "Software Development Engineer": "SDE",
+    "Forward Deployed Engineer": "FDE",
+}
+
+
+def _display_role(role: str) -> str:
+    return ROLE_DISPLAY_NAMES.get(role, role)
+
+
+def _abbrev_roles(items: list) -> list:
+    return [
+        {**it, "role": _display_role(it.get("role", ""))} if isinstance(it, dict) else it
+        for it in items
+    ]
+
+
 @app.get("/api/kpi")
 async def kpi(refresh: bool = False):
     # Normal loads read the cached summary. refresh=1 (the Refresh button) forces
@@ -311,10 +330,13 @@ async def kpi(refresh: bool = False):
         if not stats:
             stats = await get_stats()
     return {
-        "roles": stats.get("roles", []),
-        "interviews": stats.get("interviews", []),
-        "fast_track": stats.get("fast_track", []),
-        "candidates_by_role": stats.get("candidates_by_role", {}),
+        "roles": _abbrev_roles(stats.get("roles", [])),
+        "interviews": _abbrev_roles(stats.get("interviews", [])),
+        "fast_track": _abbrev_roles(stats.get("fast_track", [])),
+        "candidates_by_role": {
+            _display_role(role): cands
+            for role, cands in stats.get("candidates_by_role", {}).items()
+        },
     }
 
 
