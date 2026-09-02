@@ -7,7 +7,6 @@ load_dotenv()  # read backend/.env before anything reads os.getenv
 from stats import compute_stats, get_stats, recalc_stats
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from pydantic import BaseModel, EmailStr
@@ -437,7 +436,7 @@ async def screen(files: list[UploadFile] = File(...)):
         for f in files[:5]
     ]
 
-    result = cogitx.run_screening(blobs)
+    result = await cogitx.run_screening(blobs)
 
     for card in result.get("cards", []):
         await _persist_card(card)
@@ -458,9 +457,7 @@ async def ingest():
     seen = {d["_id"] async for d in processed_emails.find({}, {"_id": 1})}
 
     try:
-        # run_ingest does blocking network I/O (downloads + scoring), so run it
-        # in a threadpool to avoid blocking the event loop.
-        result = await run_in_threadpool(cogitx.run_ingest, seen)
+        result = await cogitx.run_ingest(seen)
     except Exception as e:
         print(f"[ingest] run_ingest failed: {e}")
         return {"ok": False, "ingested": 0, "error": str(e)}
@@ -650,7 +647,7 @@ async def decision(body: Decision):
     else:
         print(f"[decision] sending {body.decision} email to {email} ...")
         try:
-            email_sent = cogitx.send_decision_email(name, email, role, body.decision)
+            email_sent = await cogitx.send_decision_email(name, email, role, body.decision)
         except Exception as e:  # never let an email failure break the decision
             print(f"[decision] email send FAILED for {name}: {e!r}")
             email_sent = False
