@@ -4,7 +4,7 @@ import re
 from dotenv import load_dotenv
 
 load_dotenv()  # read backend/.env before anything reads os.getenv
-from stats import get_stats, recalc_stats
+from stats import compute_stats, get_stats, recalc_stats
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
@@ -319,11 +319,39 @@ def _abbrev_roles(items: list) -> list:
     ]
 
 
+def _parse_day(value: str | None, param: str) -> datetime | None:
+    """Parse a YYYY-MM-DD query param into an aware UTC datetime (midnight)."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{param} must be a date in YYYY-MM-DD format.",
+        )
+
+
 @app.get("/api/kpi")
-async def kpi(refresh: bool = False):
+async def kpi(refresh: bool = False, date_from: str | None = None,
+              date_to: str | None = None):
+    # date_from / date_to (YYYY-MM-DD) narrow the dashboard to candidates who
+    # applied in that window; both ends are inclusive. Filtered requests always
+    # aggregate from the live applicants collection — the cached summary only
+    # covers the unfiltered view.
+    start = _parse_day(date_from, "date_from")
+    end = _parse_day(date_to, "date_to")
+    if start and end and end < start:
+        raise HTTPException(status_code=400, detail="date_to must not be before date_from.")
+    # Make date_to inclusive of the whole day.
+    if end:
+        end = end + timedelta(days=1)
+
     # Normal loads read the cached summary. refresh=1 (the Refresh button) forces
     # a rebuild from the live applicants collection, so manual DB edits show up.
-    if refresh:
+    if start or end:
+        stats = await compute_stats(start, end)
+    elif refresh:
         stats = await recalc_stats()
     else:
         stats = await get_stats()
@@ -387,6 +415,9 @@ async def _persist_card(card: dict):
                 "status": "Applied",
                 "interview_date": None,
                 "interview_time": None,
+
+                # Application date — what /api/kpi's from/to filter bounds.
+                "created_at": datetime.now(timezone.utc),
 
                 # New applicant notification
                 "is_new": True,
