@@ -64,9 +64,39 @@ def _role_sort_key(role: str) -> tuple:
     return (_ROLE_ORDER.index(role) if role in _ROLE_ORDER else len(_ROLE_ORDER), role)
 
 
-async def compute_stats() -> dict:
-    """Read all applicants and build the stats payload (does not write)."""
+def applied_at(d: dict) -> datetime:
+    """When this candidate applied, as an aware UTC datetime.
+
+    New applicants carry created_at (set on insert). Rows written before that
+    field existed fall back to the ObjectId's generation time, which is the
+    insert timestamp — so no backfill migration is needed.
+    """
+    ts = d.get("created_at")
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            ts = None
+    if not isinstance(ts, datetime):
+        ts = d["_id"].generation_time
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+async def compute_stats(date_from: datetime | None = None,
+                        date_to: datetime | None = None) -> dict:
+    """Read all applicants and build the stats payload (does not write).
+
+    date_from / date_to bound the window on the application date (inclusive
+    lower bound, exclusive upper bound). Both default to None = no filtering.
+    """
     docs = [d async for d in applicants.find({})]
+
+    if date_from or date_to:
+        docs = [
+            d for d in docs
+            if (date_from is None or applied_at(d) >= date_from)
+            and (date_to is None or applied_at(d) < date_to)
+        ]
 
     # Per-role aggregation.
     roles: dict[str, dict] = {}
