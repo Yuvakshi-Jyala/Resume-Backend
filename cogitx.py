@@ -502,7 +502,7 @@ async def run_ingest(skip_ids=None) -> dict:
             if is_pdf and url:
                 pdf = await _download_pdf(url)
                 if pdf:
-                    blobs.append((name, pdf))
+                    blobs.append((name, pdf, ctype or "application/pdf"))
                     metadata.append({
                         "sender_email": sender,
                         "message_id": message_id,
