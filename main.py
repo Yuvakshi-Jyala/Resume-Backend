@@ -1,11 +1,14 @@
+import asyncio
 import json
+import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv()  # read backend/.env before anything reads os.getenv
 from stats import compute_stats, get_stats, recalc_stats
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from fastapi import BackgroundTasks, FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -17,6 +20,21 @@ from datetime import datetime, timedelta, timezone
 
 from db import applicants, processed_emails, users
 import cogitx
+import jobs
+
+logger = logging.getLogger("screen")
+
+# Max resumes accepted in a single /api/screen request, and how many of those
+# are screened concurrently in the background.
+MAX_RESUMES_PER_REQUEST = int(os.getenv("MAX_RESUMES_PER_REQUEST", "20"))
+SCREEN_CONCURRENCY = int(os.getenv("SCREEN_CONCURRENCY", "4"))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await jobs.ensure_indexes()
+    await jobs.sweep_stale_jobs()
+    yield
 
 
 # build the origin list
@@ -34,7 +52,7 @@ ALLOWED_ORIGINS = [
 ]
 
 # CREATE THE APP FIRST
-app = FastAPI(title="Resume Screening UI backend")
+app = FastAPI(title="Resume Screening UI backend", lifespan=lifespan)
 
 # THEN add middleware
 app.add_middleware(
@@ -429,20 +447,81 @@ async def _persist_card(card: dict):
     )
 
 
-@app.post("/api/screen")
-async def screen(files: list[UploadFile] = File(...)):
-    blobs = [
-        (f.filename, await f.read(), f.content_type)
-        for f in files[:5]
-    ]
+async def _run_screening_job(job_id: str, blobs: list[tuple[str, bytes, str]]):
+    """Background worker: screen each uploaded file independently (bounded by
+    SCREEN_CONCURRENCY) so per-file status/results can be polled as they land."""
+    sem = asyncio.Semaphore(SCREEN_CONCURRENCY)
 
-    result = await cogitx.run_screening(blobs)
+    async def one(index: int, blob: tuple[str, bytes, str]):
+        filename = blob[0]
+        async with sem:
+            await jobs.set_file(job_id, index, status="processing")
+            try:
+                result = await cogitx.run_screening([blob])
+                cards = result.get("cards", [])
+                for card in cards:
+                    await _persist_card(card)
+                await jobs.set_file(
+                    job_id, index,
+                    status="done", cards=cards, report=result.get("report", ""),
+                )
+            except Exception as e:
+                logger.exception("[screen] job %s failed for %r", job_id, filename)
+                await jobs.set_file(job_id, index, status="failed", error=str(e))
 
-    for card in result.get("cards", []):
-        await _persist_card(card)
+    try:
+        await asyncio.gather(*(one(i, b) for i, b in enumerate(blobs)))
+        await recalc_stats()
+    finally:
+        # A job must never be left stuck in "processing".
+        await jobs.finalize(job_id)
 
-    await recalc_stats()
-    return result
+
+@app.post("/api/screen", status_code=202)
+async def screen(background: BackgroundTasks, files: list[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+    if len(files) > MAX_RESUMES_PER_REQUEST:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MAX_RESUMES_PER_REQUEST} resumes are allowed per request.",
+        )
+
+    # Read the uploads now — UploadFile is closed once this request returns,
+    # so the background task needs the raw bytes, not the file handles.
+    blobs = [(f.filename, await f.read(), f.content_type) for f in files]
+
+    job_id = await jobs.create_job([name for name, _, _ in blobs])
+    background.add_task(_run_screening_job, job_id, blobs)
+
+    return {
+        "job_id": job_id,
+        "status": "processing",
+        "total": len(blobs),
+        "files": [{"filename": name, "status": "queued"} for name, _, _ in blobs],
+    }
+
+
+@app.get("/api/screen/{job_id}")
+async def screen_status(job_id: str):
+    job = await jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    files = job.get("files", [])
+    completed = [f for f in files if f.get("status") in ("done", "failed")]
+
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "total": job["total"],
+        "completed": len(completed),
+        "files": files,
+        # Aggregated across finished files so a caller can consume this the
+        # same way the old synchronous endpoint's {report, cards} was used.
+        "cards": [c for f in files for c in (f.get("cards") or [])],
+        "report": "\n\n".join(f["report"] for f in files if f.get("report")),
+    }
 
 
 
