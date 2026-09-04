@@ -1,0 +1,40 @@
+name: resume-workflow.dev
+services:
+  mongo-db:
+    image: mongo:latest
+    container_name: mongo-db
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: resume_screening
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: P@ssw0rd
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: resume-workflow-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URL=mongodb://mongo-db:27017
+      - DATABASE_NAME=resume_screening
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo-db:
+        condition: service_healthy
+volumes:
+  mongo-data:
