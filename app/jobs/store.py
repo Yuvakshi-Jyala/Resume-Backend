@@ -7,7 +7,7 @@ frontend can poll GET /api/screen/{job_id} and render results as they land.
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from db import screening_jobs
+from app.db import screening_jobs
 
 # Jobs (and their embedded results) auto-expire this long after creation, via
 # a TTL index on created_at — keeps the collection from growing unbounded.

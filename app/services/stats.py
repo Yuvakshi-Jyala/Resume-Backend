@@ -18,50 +18,12 @@ so the React frontend needs zero changes:
 """
 from datetime import datetime, timezone
 
-from db import applicants, dashboard_stats, ROLE_CAPS, STATS_DOC_ID
-from cogitx import normalize_band, normalize_role
+from app.db import applicants, dashboard_stats, STATS_DOC_ID
+from app.domain.bands import BANDS, band_for_applicant
+from app.domain.roles import ROLE_CAPS, normalize_role, role_sort_key
 
 # Anyone at these stages has cleared the shortlist (Option B: cumulative).
 _PAST_APPLIED = {"Shortlisted", "Call Scheduled", "Call Completed"}
-
-# Stable display order for roles on the dashboard.
-_ROLE_ORDER = [
-    "AI/ML Engineer",
-    "Solution Architect",
-    "Product Manager",
-    "Software Development Engineer",
-    "Forward Deployed Engineer",
-    "Internship",
-]
-
-# The 5 rubric decision bands, in display order.
-_BANDS = ["Fast Track", "Strong Shortlist", "Shortlist", "Hold", "Reject"]
-
-
-def _band_for(d: dict) -> str:
-    """The candidate's band: use the workflow-assigned band if present, else
-    derive it from the score using the rubric thresholds (score out of ~100)."""
-    analysis = d.get("analysis") or {}
-    band = normalize_band(analysis.get("band"))
-    if band:
-        return band
-    score = analysis.get("fit_score")
-    if score is None:
-        score = d.get("score")
-    score = float(score or 0)
-    if score >= 85:
-        return "Fast Track"
-    if score >= 75:
-        return "Strong Shortlist"
-    if score >= 65:
-        return "Shortlist"
-    if score >= 55:
-        return "Hold"
-    return "Reject"
-
-
-def _role_sort_key(role: str) -> tuple:
-    return (_ROLE_ORDER.index(role) if role in _ROLE_ORDER else len(_ROLE_ORDER), role)
 
 
 def applied_at(d: dict) -> datetime:
@@ -117,10 +79,10 @@ async def compute_stats(date_from: datetime | None = None,
             "calls_completed": 0,
             "new_count": 0,
             # Count of candidates in each decision band (for the band graph).
-            "bands": {b: 0 for b in _BANDS},
+            "bands": {b: 0 for b in BANDS},
         })
         r["applications_received"] += 1
-        band = _band_for(d)
+        band = band_for_applicant(d)
         r["bands"][band] = r["bands"].get(band, 0) + 1
         if status in _PAST_APPLIED:            # Option B: cumulative shortlist
             r["shortlisted"] += 1
@@ -130,7 +92,7 @@ async def compute_stats(date_from: datetime | None = None,
             r["calls_completed"] += 1
 
         if d.get("is_new"):
-            r["new_count"] += 1    
+            r["new_count"] += 1
 
         if band == "Fast Track":
             fast_track.append({
@@ -167,7 +129,7 @@ async def compute_stats(date_from: datetime | None = None,
                 "role": role,
             })
 
-    roles_list = sorted(roles.values(), key=lambda r: _role_sort_key(r["role"]))
+    roles_list = sorted(roles.values(), key=lambda r: role_sort_key(r["role"]))
     interviews.sort(key=lambda i: (i["date"], i["time"]))
     fast_track.sort(key=lambda c: (c["score"] or 0), reverse=True)
 
