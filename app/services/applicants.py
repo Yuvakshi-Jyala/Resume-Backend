@@ -9,6 +9,7 @@ from app.clients import cogitx
 from app.db import applicants
 from app.domain.bands import band_for_score, normalize_band
 from app.domain.formatting import experience_label, skills_bucket
+from app.domain.rubric import effective_fit_score, rubric_extremes, rubric_total_weight
 from app.services.stats import recalc_stats
 
 
@@ -79,18 +80,12 @@ async def list_applicants() -> list:
 
     async for applicant in applicants.find():
         analysis = applicant.get("analysis", {})
-        score = analysis.get("fit_score")
+        score = float(effective_fit_score(analysis, applicant.get("score")) or 0)
 
-        if score is None:
-            score = applicant.get("score")
-
-        score = float(score or 0)
         years = analysis.get("experience_years")
         exp = experience_label(years, unknown="—")
 
-        recommendation = normalize_band(analysis.get("band"))
-        if not recommendation:
-            recommendation = band_for_score(score)
+        recommendation = band_for_score(score)
 
         result.append({
             "id": str(applicant["_id"]),
@@ -118,6 +113,10 @@ async def get_applicant(applicant_id: str) -> dict:
     years = analysis.get("experience_years")
     experience = experience_label(years, unknown="Fresher")
 
+    rubric = analysis.get("rubric_breakdown") or {}
+    fit_score = effective_fit_score(analysis, applicant.get("score"))
+    strongest, weakest = rubric_extremes(rubric)
+
     return {
         "id": str(applicant["_id"]),
         "status": applicant.get("status"),
@@ -127,8 +126,18 @@ async def get_applicant(applicant_id: str) -> dict:
         "email": analysis.get("email"),
         "phone": analysis.get("phone"),
 
-        "fit_score": analysis.get("fit_score"),
-        "band": normalize_band(analysis.get("band")),
+        "fit_score": fit_score,
+        "band": band_for_score(fit_score) if fit_score is not None
+                else normalize_band(analysis.get("band")),
+
+        # The weighted breakdown the score is computed from, so the detail view
+        # can show how the number was arrived at (e.g. "88 / 100").
+        "rubric_breakdown": rubric,
+        "rubric_total_weight": rubric_total_weight(rubric),
+        "strongest_category": strongest,
+        "weakest_category": weakest,
+
+        "shortlisted": analysis.get("shortlisted"),
 
         "experience": experience,
         "experience_years": years,

@@ -5,8 +5,9 @@ import re
 
 import httpx
 
-from app.domain.bands import normalize_band
+from app.domain.bands import band_for_score, normalize_band
 from app.domain.roles import normalize_role
+from app.domain.rubric import effective_fit_score, normalize_rubric
 from app.core.logging import cogitx_logger as logger
 
 
@@ -65,6 +66,18 @@ def _try_parse_json_list(raw):
 def _card_from_json(c: dict) -> dict:
     """Map a candidate object from agent_2's JSON output to a frontend card."""
     q = c.get("interview_questions") or {}
+
+    # The weighted rubric is the source of truth for the score — the workflow's
+    # own fit_score drifts from its breakdown. Derive both the score and the
+    # band from it so the two can never contradict each other on screen; fall
+    # back to the asserted values only when there's no usable breakdown.
+    rubric = normalize_rubric(c.get("rubric_breakdown"))
+    fit_score = effective_fit_score({
+        "rubric_breakdown": rubric,
+        "fit_score": c.get("fit_score"),
+    })
+    band = band_for_score(fit_score) if fit_score is not None else normalize_band(c.get("band"))
+
     return {
         # Accept both the original names (name/role) and the newer workflow
         # schema (candidate_name/matched_role) so either output shape works.
@@ -72,8 +85,12 @@ def _card_from_json(c: dict) -> dict:
         "role": normalize_role(c.get("role") or c.get("matched_role") or ""),
         "email": c.get("email"),
         "phone": c.get("phone"),
-        "fit_score": c.get("fit_score"),
-        "band": normalize_band(c.get("band")),
+        "fit_score": fit_score,
+        "band": band,
+        "rubric_breakdown": rubric,
+        # Left as-is rather than coerced to False: None means the workflow
+        # didn't say, which is not the same as "not shortlisted".
+        "shortlisted": c.get("shortlisted"),
         "matched_skills": c.get("matched_skills") or [],
         "missing_skills": c.get("missing_skills") or [],
         "summary": c.get("summary") or "",

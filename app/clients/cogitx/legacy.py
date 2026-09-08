@@ -25,8 +25,11 @@ def _cards_from_report(report: str) -> list:
     lines = report.split("\n")
 
     # 1) Shortlisted candidates: **Name** — Role — NN/100 (or NN)
+    # The newer report writes the same line as a heading with a percent suffix
+    # (### Name — Role — NN%), so both markers are optional here.
     header_re = re.compile(
-        r"^\*\*(?P<name>[^*]+?)\*\*\s*[—–-]\s*(?P<role>.+?)\s*[—–-]\s*(?P<score>\d+(?:\.\d+)?)\s*(?:/\s*100)?\s*$"
+        r"^(?:#{1,6}\s*)?\*{0,2}(?P<name>[^*—–]+?)\*{0,2}\s*[—–-]\s*(?P<role>.+?)\s*[—–-]\s*"
+        r"(?P<score>\d+(?:\.\d+)?)\s*(?:/\s*100|%)?\s*$"
     )
     matched_re = re.compile(r"^\*\*Matched:?\*\*\s*(.+)$", re.IGNORECASE)
     gaps_re = re.compile(r"^\*\*Gaps:?\*\*\s*(.+)$", re.IGNORECASE)

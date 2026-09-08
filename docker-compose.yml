@@ -1,8 +1,8 @@
 name: resume-workflow.dev
 services:
-  mongo-db:
+  mongo:
     image: mongo:latest
-    container_name: mongo-db
+    container_name: mongo
     restart: unless-stopped
     environment:
       MONGO_INITDB_DATABASE: resume_screening
@@ -29,12 +29,12 @@ services:
     env_file:
       - .env
     environment:
-      - MONGODB_URL=mongodb://mongo-db:27017
+      - MONGODB_URL=mongodb://admin:P%40ssw0rd@mongo:27017
       - DATABASE_NAME=resume_screening
     ports:
       - "8000:8000"
     depends_on:
-      mongo-db:
+      mongo:
         condition: service_healthy
 volumes:
   mongo-data:
