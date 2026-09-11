@@ -8,7 +8,26 @@ env:
 
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Match the Dockerfile, not whatever the runner defaults to.
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest
+
   build-and-deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       # 1. Checkout code
@@ -60,3 +79,4 @@ jobs:
               "COGITX_INGEST_CLIENT_ID=${{ secrets.COGITX_INGEST_CLIENT_ID }}" \
               "COGITX_INGEST_CLIENT_SECRET=${{ secrets.COGITX_INGEST_CLIENT_SECRET }}" \
               "FRONTEND_ORIGINS=${{ secrets.FRONTEND_ORIGINS }}" \
+              "BACKFILL_TOKEN=${{ secrets.BACKFILL_TOKEN }}" \

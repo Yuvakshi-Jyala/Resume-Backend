@@ -41,6 +41,12 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
+# Shared secret for the admin vocabulary-migration endpoint, which rewrites
+# status/decision on every applicant. Sent as the X-Admin-Token header. While
+# unset, the migration refuses to write at all — its dry run stays open, like
+# every other route in this app.
+BACKFILL_TOKEN = os.getenv("BACKFILL_TOKEN", "")
+
 # ---------------------------------------------------------------------------
 # Mongo
 # ---------------------------------------------------------------------------
