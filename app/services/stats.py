@@ -10,20 +10,32 @@ The OUTPUT SHAPE is deliberately identical to what /api/kpi returned before,
 so the React frontend needs zero changes:
   {
     "roles": [ {role, applications_received, cap, shortlisted,
-                calls_scheduled, calls_completed}, ... ],
+                calls_scheduled, calls_completed, unknown_status}, ... ],
     "interviews": [ {date, time, name, role}, ... ],
-    "candidates_by_role": { role: [ {name, status, interview_date,
-                                     interview_time, score}, ... ] }
+    "candidates_by_role": { role: [ {name, status, status_label,
+                                     decision, decision_label, decision_at,
+                                     interview_date, interview_time,
+                                     score}, ... ] }
   }
+
+`status` and `decision` carry canonical slugs ("shortlisted"); the *_label
+fields carry the display strings. See app/domain/statuses.py.
 """
 from datetime import datetime, timezone
 
 from app.db import applicants, dashboard_stats, STATS_DOC_ID
 from app.domain.bands import BANDS, band_for_applicant
+from app.domain.decisions import decision_payload
 from app.domain.roles import ROLE_CAPS, normalize_role, role_sort_key
-
-# Anyone at these stages has cleared the shortlist (Option B: cumulative).
-_PAST_APPLIED = {"Shortlisted", "Call Scheduled", "Call Completed"}
+from app.domain.statuses import (
+    CALL_COMPLETED,
+    CALL_SCHEDULED,
+    SHORTLISTED,
+    UNKNOWN,
+    coerce_status,
+    has_reached,
+    status_payload,
+)
 
 
 def applied_at(d: dict) -> datetime:
@@ -68,7 +80,8 @@ async def compute_stats(date_from: datetime | None = None,
 
     for d in docs:
         role = normalize_role(d.get("role", ""))
-        status = d.get("status", "")
+        # Lenient: one hand-edited row must not abort the whole recompute.
+        status = coerce_status(d.get("status"))
 
         r = roles.setdefault(role, {
             "role": role,
@@ -78,18 +91,23 @@ async def compute_stats(date_from: datetime | None = None,
             "calls_scheduled": 0,
             "calls_completed": 0,
             "new_count": 0,
+            # Rows whose stored status we couldn't read. 0 across every role
+            # means the vocabulary migration is complete.
+            "unknown_status": 0,
             # Count of candidates in each decision band (for the band graph).
             "bands": {b: 0 for b in BANDS},
         })
         r["applications_received"] += 1
         band = band_for_applicant(d)
         r["bands"][band] = r["bands"].get(band, 0) + 1
-        if status in _PAST_APPLIED:            # Option B: cumulative shortlist
+        if has_reached(status, SHORTLISTED):   # Option B: cumulative shortlist
             r["shortlisted"] += 1
-        if status == "Call Scheduled":
+        if status == CALL_SCHEDULED:
             r["calls_scheduled"] += 1
-        if status == "Call Completed":
+        if status == CALL_COMPLETED:
             r["calls_completed"] += 1
+        if status == UNKNOWN:
+            r["unknown_status"] += 1
 
         if d.get("is_new"):
             r["new_count"] += 1
@@ -104,24 +122,25 @@ async def compute_stats(date_from: datetime | None = None,
                 # extras (harmless; Interview interface ignores them)
                 "score": d.get("score"),
                 "band": band,
-                "status": status,
+                **status_payload(status),
             })
 
         candidates_by_role.setdefault(role, []).append({
             "id": str(d["_id"]),
             "name": d.get("name", ""),
-            "status": status,
+            **status_payload(status),
             "interview_date": d.get("interview_date"),
             "interview_time": d.get("interview_time"),
             "score": d.get("score"),
             "analysis": d.get("analysis"),
-            "decision": d.get("decision"),
+            **decision_payload(d.get("decision")),
             "email_sent": d.get("email_sent"),
             "is_new": d.get("is_new", False),
         })
 
         # Upcoming interviews = anyone with a scheduled call that has a date.
-        if status == "Call Scheduled" and d.get("interview_date"):
+        # Exact equality, not has_reached: a completed call is not upcoming.
+        if status == CALL_SCHEDULED and d.get("interview_date"):
             interviews.append({
                 "date": d["interview_date"],
                 "time": d.get("interview_time") or "",

@@ -45,7 +45,10 @@ async def kpi(refresh: bool = False, date_from: str | None = None,
     else:
         stats = await get_stats()
         if not stats:
-            stats = await get_stats()
+            # Cache miss — nothing has written the summary doc yet (fresh
+            # database, or it was dropped). Build it now rather than re-reading
+            # the same empty doc, which left `stats` None and 500'd below.
+            stats = await recalc_stats()
     return {
         "roles": abbrev_roles(stats.get("roles", [])),
         "interviews": abbrev_roles(stats.get("interviews", [])),
